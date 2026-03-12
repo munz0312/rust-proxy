@@ -5,6 +5,7 @@ use tokio::net::TcpListener;
 
 mod backend;
 mod config;
+mod connection_pool;
 mod load_balancer;
 mod proxy;
 

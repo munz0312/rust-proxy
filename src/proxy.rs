@@ -1,35 +1,31 @@
-use std::{pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{
     Request, Response,
     body::{Bytes, Incoming},
+    client::conn::http1,
     service::Service,
 };
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpStream;
 
-use crate::load_balancer::{LoadBalancer, RoundRobin};
+use crate::{
+    connection_pool::Pool,
+    load_balancer::{LoadBalancer, RoundRobin},
+};
 
+#[derive(Clone)]
 pub struct Proxy {
-    client: Client<HttpConnector, Incoming>,
     load_balancer: Arc<RoundRobin>,
-}
-
-impl Clone for Proxy {
-    fn clone(&self) -> Self {
-        Self {
-            client: self.client.clone(),
-            load_balancer: self.load_balancer.clone(),
-        }
-    }
+    pool: Arc<Pool>,
 }
 
 impl Proxy {
     pub fn new(load_balancer: Arc<RoundRobin>) -> Self {
-        let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
         Self {
-            client,
             load_balancer,
+            pool: Arc::new(Pool::new()),
         }
     }
 }
@@ -43,15 +39,19 @@ impl Service<Req> for Proxy {
 
     fn call(&self, req: Req) -> Self::Future {
         let lb = self.load_balancer.clone();
-        let client = self.client.clone();
+        let pool = self.pool.clone();
         Box::pin(async move {
             let backend = lb.next_backend().ok_or("no healthy backends")?;
-            let request: Request<Incoming> = Request::builder()
+            let mut sender = pool.acquire(backend.addr).await?;
+
+            let outbound = Request::builder()
                 .method(req.method())
-                .uri(format!("http://{}{}", backend.addr, req.uri().path()))
-                .body(req.into_body())
-                .unwrap();
-            let response = client.request(request).await?;
+                .uri(req.uri().path())
+                .header("Host", backend.addr.to_string())
+                .body(req.into_body())?;
+
+            let response = sender.send_request(outbound).await?;
+            pool.release(backend.addr, sender);
             Ok(response.map(|body| body.boxed()))
         })
     }
