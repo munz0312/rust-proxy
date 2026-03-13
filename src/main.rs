@@ -6,6 +6,7 @@ use tokio::net::TcpListener;
 mod backend;
 mod config;
 mod connection_pool;
+mod health;
 mod load_balancer;
 mod proxy;
 
@@ -36,10 +37,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         index: AtomicUsize::new(0),
     });
 
+    let backends = load_balancer.backends.clone();
     let proxy = Proxy::new(load_balancer);
 
     let listener = TcpListener::bind(config.listen).await?;
     println!("Proxy listening on {}", config.listen);
+
+    tokio::spawn(health::run_health_checks(
+        backends,
+        config.health_check.interval_secs as u64,
+        config.health_check.path.clone(),
+    ));
 
     loop {
         let (stream, _) = listener.accept().await?;

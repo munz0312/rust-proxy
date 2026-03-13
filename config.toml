@@ -6,7 +6,7 @@ read_ms = 5000
 write_ms = 5000
 
 [health_check]
-interval_secs = 10
+interval_secs = 2
 failure_threshold = 3
 recovery_threshold = 2
 path = "/health"
