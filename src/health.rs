@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use http_body_util::Empty;
 use hyper::{
-    Request, Response, StatusCode,
+    Request, Response,
     body::{Bytes, Incoming},
     client::conn::http1,
 };
