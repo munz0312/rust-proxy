@@ -50,10 +50,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ));
 
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, addr) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let proxy = proxy.clone();
+        let mut proxy = proxy.clone();
 
+        proxy.client_addr = Some(addr);
         tokio::spawn(async move {
             if let Err(err) = http1::Builder::new().serve_connection(io, proxy).await {
                 eprintln!("connection error: {}", err);
