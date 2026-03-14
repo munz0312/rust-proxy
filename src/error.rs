@@ -22,4 +22,10 @@ pub enum ProxyError {
 
     #[error("{0}")]
     Pool(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("timeout")]
+    Timeout,
+
+    #[error("{0}")]
+    IoError(#[from] std::io::Error),
 }

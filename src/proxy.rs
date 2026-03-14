@@ -9,6 +9,7 @@ use rust_proxy::full;
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use crate::{
+    config::TimeoutConfig,
     connection_pool::Pool,
     error::ProxyError,
     load_balancer::{LoadBalancer, RoundRobin},
@@ -19,14 +20,16 @@ pub struct Proxy {
     load_balancer: Arc<RoundRobin>,
     pool: Arc<Pool>,
     pub client_addr: Option<SocketAddr>,
+    timeouts: TimeoutConfig,
 }
 
 impl Proxy {
-    pub fn new(load_balancer: Arc<RoundRobin>) -> Self {
+    pub fn new(load_balancer: Arc<RoundRobin>, timeouts: TimeoutConfig) -> Self {
         Self {
             load_balancer,
             pool: Arc::new(Pool::new()),
             client_addr: None,
+            timeouts,
         }
     }
 }
@@ -42,10 +45,13 @@ impl Service<Req> for Proxy {
         let lb = self.load_balancer.clone();
         let pool = self.pool.clone();
         let client_ip = self.client_addr.unwrap().ip().to_string();
+        let timeout_config = self.timeouts.clone();
         Box::pin(async move {
             let result: Result<Self::Response, Self::Error> = async {
                 let backend = lb.next_backend().ok_or(ProxyError::NoBackends)?;
-                let mut sender = pool.acquire(backend.addr).await.map_err(ProxyError::Pool)?;
+                let mut sender = pool
+                    .acquire(backend.addr, timeout_config.connect_ms.into())
+                    .await?;
 
                 *req.uri_mut() = req.uri().path().parse()?;
 
@@ -60,7 +66,12 @@ impl Service<Req> for Proxy {
                 };
                 headers.insert("X-Forwarded-For", HeaderValue::from_str(&xff)?);
 
-                let response = sender.send_request(req).await?;
+                let response = tokio::time::timeout(
+                    std::time::Duration::from_millis(timeout_config.read_ms.into()),
+                    sender.send_request(req),
+                )
+                .await
+                .map_err(|_| ProxyError::Timeout)??;
                 pool.release(backend.addr, sender);
                 Ok(response.map(|body| body.boxed()))
             }
@@ -72,6 +83,12 @@ impl Service<Req> for Proxy {
                     .status(503)
                     .body(full("Service Unavailable"))
                     .unwrap()),
+
+                Err(ProxyError::Timeout) => Ok(Response::builder()
+                    .status(504)
+                    .body(full("Timeout"))
+                    .unwrap()),
+
                 Err(e) => Ok(Response::builder()
                     .status(502)
                     .body(full(format!("Bad Gateway: {}", e)))

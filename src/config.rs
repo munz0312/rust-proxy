@@ -10,7 +10,7 @@ pub struct ProxyConfig {
     pub backends: BackendConfig,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct TimeoutConfig {
     pub connect_ms: u32,
     pub read_ms: u32,

@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     let backends = load_balancer.backends.clone();
-    let proxy = Proxy::new(load_balancer);
+    let proxy = Proxy::new(load_balancer, config.timeouts);
 
     let listener = TcpListener::bind(config.listen).await?;
     println!("Proxy listening on {}", config.listen);

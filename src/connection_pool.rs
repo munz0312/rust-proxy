@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Mutex};
+use std::{collections::HashMap, net::SocketAddr, sync::Mutex, time::Duration};
 
 use hyper::{
     body::Incoming,
@@ -6,6 +6,8 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+
+use crate::error::ProxyError;
 
 pub struct Pool {
     conns: Mutex<HashMap<SocketAddr, Vec<SendRequest<Incoming>>>>,
@@ -21,7 +23,8 @@ impl Pool {
     pub async fn acquire(
         &self,
         addr: SocketAddr,
-    ) -> Result<SendRequest<Incoming>, Box<dyn std::error::Error + Send + Sync>> {
+        timeout_ms: u64,
+    ) -> Result<SendRequest<Incoming>, ProxyError> {
         loop {
             let sender = self
                 .conns
@@ -40,7 +43,14 @@ impl Pool {
             }
         }
 
-        let stream = TcpStream::connect(addr).await?;
+        let stream =
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), TcpStream::connect(addr))
+                .await
+            {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(e)) => return Err(ProxyError::IoError(e)),
+                Err(_) => return Err(ProxyError::Timeout),
+            };
         let io = TokioIo::new(stream);
         let (sender, conn) = http1::handshake(io).await?;
         tokio::spawn(conn);
