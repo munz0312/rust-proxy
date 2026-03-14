@@ -10,6 +10,7 @@ use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use crate::{
     connection_pool::Pool,
+    error::ProxyError,
     load_balancer::{LoadBalancer, RoundRobin},
 };
 
@@ -34,7 +35,7 @@ type Req = Request<Incoming>;
 
 impl Service<Req> for Proxy {
     type Response = Response<BoxBody<Bytes, hyper::Error>>;
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = ProxyError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, mut req: Req) -> Self::Future {
@@ -42,9 +43,9 @@ impl Service<Req> for Proxy {
         let pool = self.pool.clone();
         let client_ip = self.client_addr.unwrap().ip().to_string();
         Box::pin(async move {
-            let result: Result<Self::Response, Box<dyn std::error::Error + Send + Sync>> = async {
-                let backend = lb.next_backend().ok_or("no healthy backends")?;
-                let mut sender = pool.acquire(backend.addr).await?;
+            let result: Result<Self::Response, Self::Error> = async {
+                let backend = lb.next_backend().ok_or(ProxyError::NoBackends)?;
+                let mut sender = pool.acquire(backend.addr).await.map_err(ProxyError::Pool)?;
 
                 *req.uri_mut() = req.uri().path().parse()?;
 
@@ -60,7 +61,6 @@ impl Service<Req> for Proxy {
                 headers.insert("X-Forwarded-For", HeaderValue::from_str(&xff)?);
 
                 let response = sender.send_request(req).await?;
-
                 pool.release(backend.addr, sender);
                 Ok(response.map(|body| body.boxed()))
             }
@@ -68,6 +68,10 @@ impl Service<Req> for Proxy {
 
             match result {
                 Ok(res) => Ok(res),
+                Err(ProxyError::NoBackends) => Ok(Response::builder()
+                    .status(503)
+                    .body(full("Service Unavailable"))
+                    .unwrap()),
                 Err(e) => Ok(Response::builder()
                     .status(502)
                     .body(full(format!("Bad Gateway: {}", e)))
