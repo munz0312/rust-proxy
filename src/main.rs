@@ -9,6 +9,7 @@ mod connection_pool;
 mod error;
 mod health;
 mod load_balancer;
+mod metrics;
 mod proxy;
 
 use backend::Backend;
@@ -39,7 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     let backends = load_balancer.backends.clone();
-    let proxy = Proxy::new(load_balancer, config.timeouts);
+    let metrics = metrics::Metrics::new(&config.backends.servers);
+    let proxy = Proxy::new(load_balancer, config.timeouts, metrics);
 
     let listener = TcpListener::bind(config.listen).await?;
     println!("Proxy listening on {}", config.listen);

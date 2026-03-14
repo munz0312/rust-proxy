@@ -12,3 +12,4 @@ tower = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.6"
 thiserror = "2.0.18"
+prometheus = "0.14.0"
